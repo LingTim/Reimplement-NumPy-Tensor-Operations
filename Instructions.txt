@@ -1,0 +1,23 @@
+開啟虛擬環境
+source .venv/bin/activate
+
+退出虛擬環境
+deactivate
+
+刪除虛擬環境
+rm -rf .venv
+
+安裝pip
+sudo apt install python3-pip
+
+安裝pybind11 pytest numpy
+pip install pybind11 pytest numpy
+
+安裝g++
+sudo apt install g++
+
+將NDarray.h編譯成python可用的套件
+g++ -O3 -Wall -shared -std=c++11 -fPIC $(python3 -m pybind11 --includes) bind.cpp -o my_NDarray_module$(python3-config --extension-suffix)
+
+進行測試
+pytest test_program.py

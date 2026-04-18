@@ -82,8 +82,22 @@ public:
 
     //建構子4
     //手動宣告內部數值建立多維陣列
-    //待做
-    //
+    NDarray(const std::vector<size_t>& shape, std::initializer_list<T> init_list) : shape_(shape), data_(init_list)
+    {
+        size_t size = 1;
+
+        for (size_t dim : shape_)
+        {
+            size *= dim;
+        }
+
+        if (size != data_.size()) 
+        {
+            throw std::invalid_argument("Initializer list size does not match shape.");
+        }
+
+        compute_strides();
+    }
 
     //存取器
     const std::vector<size_t>& shape() const { return shape_; }
