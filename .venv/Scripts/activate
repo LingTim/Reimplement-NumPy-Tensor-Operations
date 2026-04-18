@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="C:\Users\HuiTingLin\Reimplement_NumPy_Tensor_Operations\.venv"
+VIRTUAL_ENV="C:\Users\HuiTingLin\Reimplement-NumPy-Tensor-Operations\.venv"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
