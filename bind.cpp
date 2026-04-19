@@ -40,6 +40,9 @@ PYBIND11_MODULE(my_NDarray_module, m)
         .def(float() * py::self)
         .def(float() / py::self)
 
+        // 綁定 Reduction
+        .def("sum", &NDarray<float>::sum, py::arg("axis") = -1)
+
         // 綁定索引存取
         .def("__getitem__", [](const NDarray<float>& t, const std::vector<size_t>& indices) {
             return t(indices);

@@ -75,3 +75,38 @@ def test_Scalar_with_NDarray():
     # 除法
     c_div = 20.0 / a
     assert c_div[[1, 1]] == 4.0
+
+# 測試broadcasting
+def test_Broadcasting():
+    a = my_NDarray_module.Tensor([2, 3], [1, 2, 3, 4, 5, 6])
+    b = my_NDarray_module.Tensor([3], [2, 4, 6])
+    c = a + b
+
+    assert c.shape == [2, 3]
+
+    assert c[[0, 0]] == 3
+    assert c[[0, 1]] == 6
+    assert c[[0, 2]] == 9
+    assert c[[1, 0]] == 6
+    assert c[[1, 1]] == 9
+    assert c[[1, 2]] == 12
+
+# 測試Reduction
+def test_Reduction():
+    a = my_NDarray_module.Tensor([2, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24])
+    
+    b = a.sum()
+    assert b.shape == [1]
+    assert b[[0]] == 300
+
+    c = a.sum(0)
+    assert c.shape == [3, 4]
+    assert c[[0, 0]] == 14
+
+    d = a.sum(1)
+    assert d.shape == [2, 4]
+    assert d[[0, 0]] == 15
+
+    e = a.sum(2)
+    assert e.shape == [2, 3]
+    assert e[[0, 0]] == 10
