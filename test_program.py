@@ -110,3 +110,41 @@ def test_Reduction():
     e = a.sum(2)
     assert e.shape == [2, 3]
     assert e[[0, 0]] == 10
+
+def test_Tensor_Contraction():
+    a = my_NDarray_module.Tensor([2, 3], [1, 2, 3, 4, 5, 6])
+    b = my_NDarray_module.Tensor([3, 2], [7, 8, 9, 10, 11, 12])
+    c = a.matmul(b)
+
+    assert c.shape == [2, 2]
+    assert c[[0, 0]] == 58
+    assert c[[0, 1]] == 64
+    assert c[[1, 0]] == 139
+    assert c[[1, 1]] == 154
+
+def test_same_shape_batch_ND_Tensor_Contraction():
+    a = my_NDarray_module.Tensor([2, 3, 4], [1.0] * 24)
+    b = my_NDarray_module.Tensor([2, 4, 2], [2.0] * 16)
+    c = a @ b
+
+    assert c.shape == [2, 3, 2]
+
+    # 驗證 Batch 0
+    assert c[[0, 0, 0]] == 8.0
+    assert c[[0, 2, 1]] == 8.0
+    
+    # 驗證 Batch 1
+    assert c[[1, 0, 0]] == 8.0
+    assert c[[1, 2, 1]] == 8.0
+
+def test_different_shape_batch_ND_Tensor_Contraction():
+    a = my_NDarray_module.Tensor([10, 1, 2, 3], [1.0] * 60)
+    b = my_NDarray_module.Tensor([5, 3, 4], [2.0] * 60)
+    c = a @ b
+
+    assert c.shape == [10, 5, 2, 4]
+
+    assert c[[0, 0, 0, 0]] == 6.0
+    assert c[[9, 4, 1, 3]] == 6.0
+    assert c[[5, 2, 0, 2]] == 6.0
+    assert c[[1, 0, 1, 0]] == 6.0
