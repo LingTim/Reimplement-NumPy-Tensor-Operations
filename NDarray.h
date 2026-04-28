@@ -62,7 +62,7 @@ private:
         {
             int idx_A = ndim_A - 1 - i;
             int idx_B = ndim_B - 1 - i;
-            int res_idx = max_ndim - 1 - i;
+            int result_idx = max_ndim - 1 - i;
 
             size_t dim_A = (idx_A >= 0) ? shape_[idx_A] : 1;
             size_t dim_B = (idx_B >= 0) ? other.shape_[idx_B] : 1;
@@ -72,9 +72,9 @@ private:
                 throw std::invalid_argument("Shapes cannot be broadcasted together.");
             }
 
-            result_shape[res_idx] = std::max(dim_A, dim_B);
-            strides_A[res_idx] = (dim_A == 1) ? 0 : strides_[idx_A];
-            strides_B[res_idx] = (dim_B == 1) ? 0 : other.strides_[idx_B];
+            result_shape[result_idx] = std::max(dim_A, dim_B);
+            strides_A[result_idx] = (dim_A == 1) ? 0 : strides_[idx_A];
+            strides_B[result_idx] = (dim_B == 1) ? 0 : other.strides_[idx_B];
         }
 
         NDarray<T> result(result_shape);
@@ -87,9 +87,9 @@ private:
 
             for (int d = 0; d < max_ndim; ++d) 
             {
-                size_t res_stride = result.strides_[d];
-                size_t coord = temp_idx / res_stride;
-                temp_idx %= res_stride;
+                size_t result_stride = result.strides_[d];
+                size_t coord = temp_idx / result_stride;
+                temp_idx %= result_stride;
 
                 flat_idx_A += coord * strides_A[d];
                 flat_idx_B += coord * strides_B[d];
@@ -340,7 +340,7 @@ public:
         return result;
     }
 
-    // Reduction 沿著特定軸將NDarray壓扁
+    // Reduction： 沿著特定軸將NDarray壓扁
     // 舉例： 一個形狀為[A, B, C, D]的NDarray
     // 以axis=-1壓扁： 形狀為[1]
     // 以axis=0壓扁： 形狀為[B, C, D]
@@ -371,28 +371,28 @@ public:
         }
 
         // 沿著特定軸將NDarray壓扁
-        std::vector<size_t> res_shape;
+        std::vector<size_t> result_shape;
         for (int i = 0; i < static_cast<int>(shape_.size()); ++i) 
         {
             if (i != axis)
             {
-                res_shape.push_back(shape_[i]);
+                result_shape.push_back(shape_[i]);
             }
         }
         
         // 一維NDarray以axis=0壓扁 會變Scalar 形狀為[1]
-        if (res_shape.empty()) 
+        if (result_shape.empty()) 
         {
-            res_shape.push_back(1);
+            result_shape.push_back(1);
         }
 
-        NDarray<T> result(res_shape);
+        NDarray<T> result(result_shape);
 
         for (size_t i = 0; i < data_.size(); ++i) 
         {
             size_t temp_idx = i;
-            size_t res_flat_idx = 0;
-            int res_d = 0;
+            size_t result_flat_idx = 0;
+            int result_d = 0;
 
             // 算出這個元素對應到result的哪個位置
             for (int d = 0; d < static_cast<int>(shape_.size()); ++d) 
@@ -402,12 +402,128 @@ public:
                 
                 if (d != axis) 
                 {
-                    res_flat_idx += coord * result.strides_[res_d];
-                    res_d++;
+                    result_flat_idx += coord * result.strides_[result_d];
+                    result_d++;
                 }
             }
 
-            result.data_[res_flat_idx] += data_[i];
+            result.data_[result_flat_idx] += data_[i];
+        }
+
+        return result;
+    }
+
+    // Tensor Contraction: 支援Broadcasting的N維矩陣乘法
+    // 矩陣形狀的最後兩位才是真正要做矩陣乘法的形狀 前面的都是Batch
+    // 最後兩位不可以不滿足矩陣乘法的限制：a*b和c*d的矩陣要做乘法的話 b與c必須相同
+    // 除最後兩位外的形狀只要能滿足broadcasting的話 就可以相同
+    NDarray<T> matmul(const NDarray<T>& other) const
+    {
+        int ndim_A = shape_.size();
+        int ndim_B = other.shape_.size();
+
+        // 檢查矩陣的維度至少是2
+        if (ndim_A < 2 || ndim_B < 2)
+        {
+            throw std::invalid_argument("matmul requires arrays to be at least 2D.");
+        }
+
+        // 檢查形狀的最後兩位是否符合矩陣乘法的規則
+        size_t M = shape_[ndim_A - 2];
+        size_t K = shape_[ndim_A - 1];
+        size_t other_K = other.shape_[ndim_B - 2];
+        size_t N = other.shape_[ndim_B - 1];
+
+        if (K != other_K)
+        {
+            throw std::invalid_argument("Matrix inner dimensions do not align for multiplication.");
+        }
+
+        // 處理Batch的Broadcasting
+        int batch_ndim_A = ndim_A - 2;
+        int batch_ndim_B = ndim_B - 2;
+        int max_batch_ndim = std::max(batch_ndim_A, batch_ndim_B);
+
+        std::vector<size_t> result_batch_shape(max_batch_ndim);
+        std::vector<size_t> batch_strides_A(max_batch_ndim, 0);
+        std::vector<size_t> batch_strides_B(max_batch_ndim, 0);
+
+        for (int i = 0; i < max_batch_ndim; ++i)
+        {
+            int idx_A = batch_ndim_A - 1 - i;
+            int idx_B = batch_ndim_B - 1 - i;
+            int result_idx = max_batch_ndim - 1 - i;
+
+            size_t dim_A = (idx_A >= 0) ? shape_[idx_A] : 1;
+            size_t dim_B = (idx_B >= 0) ? other.shape_[idx_B] : 1;
+
+            if (dim_A != dim_B && dim_A != 1 && dim_B != 1)
+            {
+                throw std::invalid_argument("Batch shapes cannot be broadcasted together.");
+            }
+
+            result_batch_shape[result_idx] = std::max(dim_A, dim_B);
+
+            batch_strides_A[result_idx] = (dim_A == 1) ? 0 : strides_[idx_A];
+            batch_strides_B[result_idx] = (dim_B == 1) ? 0 : other.strides_[idx_B];
+        }
+
+        std::vector<size_t> result_shape = result_batch_shape;
+        result_shape.push_back(M);
+        result_shape.push_back(N);
+
+        NDarray<T> result(result_shape);
+
+        // 預先提取Matrix的strides 提升迴圈效能
+        size_t stride_A_M = strides_[ndim_A - 2];
+        size_t stride_A_K = strides_[ndim_A - 1];
+        size_t stride_B_K = other.strides_[ndim_B - 2];
+        size_t stride_B_N = other.strides_[ndim_B - 1];
+        
+        int result_ndim = result.shape_.size();
+        size_t stride_C_M = result.strides_[result_ndim - 2];
+        size_t stride_C_N = result.strides_[result_ndim - 1];
+
+        size_t num_batches = 1;
+        for (size_t dim : result_batch_shape)
+        {
+            num_batches *= dim;
+        }
+
+        // 走訪所有廣播後的Batch並相乘
+        for (size_t b = 0; b < num_batches; ++b)
+        {
+            size_t temp_b = b;
+            size_t batch_offset_A = 0;
+            size_t batch_offset_B = 0;
+            size_t batch_offset_C = 0;
+
+            for (int d = max_batch_ndim - 1; d >= 0; --d)
+            {
+                size_t coord = temp_b % result_batch_shape[d];
+                temp_b /= result_batch_shape[d];
+
+                batch_offset_A += coord * batch_strides_A[d];
+                batch_offset_B += coord * batch_strides_B[d];
+                batch_offset_C += coord * result.strides_[d];
+            }
+
+            for (size_t i = 0; i < M; ++i)
+            {
+                for (size_t k = 0; k < K; ++k)
+                {
+                    size_t idx_A = batch_offset_A + i * stride_A_M + k * stride_A_K;
+                    T a_val = data_[idx_A];
+
+                    for (size_t j = 0; j < N; ++j)
+                    {
+                        size_t idx_B = batch_offset_B + k * stride_B_K + j * stride_B_N;
+                        size_t idx_C = batch_offset_C + i * stride_C_M + j * stride_C_N;
+
+                        result.data_[idx_C] += a_val * other.data_[idx_B];
+                    }
+                }
+            }
         }
 
         return result;
