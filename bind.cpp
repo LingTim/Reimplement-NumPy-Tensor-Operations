@@ -47,6 +47,10 @@ PYBIND11_MODULE(my_NDarray_module, m)
         .def("matmul", &NDarray<float>::matmul)
         .def("__matmul__", &NDarray<float>::matmul) // 支援Python的@運算子
 
+        // 綁定矩陣轉置
+        .def("transpose", &NDarray<float>::transpose)
+        .def_property_readonly("T", &NDarray<float>::transpose)
+
         // 綁定索引存取
         .def("__getitem__", [](const NDarray<float>& t, const std::vector<size_t>& indices) {
             return t(indices);

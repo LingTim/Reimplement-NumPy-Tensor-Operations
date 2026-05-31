@@ -5,6 +5,8 @@
 #include<vector>
 #include<numeric>
 #include<stdexcept>
+#include <algorithm>
+#include<immintrin.h>
 
 template <typename T>
 class NDarray
@@ -99,6 +101,38 @@ private:
         }
 
         return result;
+    }
+
+    // AVX加速的矩陣乘法
+    void compute_2d_matmul_avx(const T* A, const T* B, T* C, size_t M, size_t K, size_t N, 
+                               size_t stride_A_M, size_t stride_B_K, size_t stride_C_M) const
+    {
+        const size_t BLOCK = 64;
+        for (size_t i_b = 0; i_b < M; i_b += BLOCK) {
+            for (size_t k_b = 0; k_b < K; k_b += BLOCK) {
+                for (size_t j_b = 0; j_b < N; j_b += BLOCK) {
+                    size_t i_e = std::min(i_b + BLOCK, M);
+                    size_t k_e = std::min(k_b + BLOCK, K);
+                    size_t j_e = std::min(j_b + BLOCK, N);
+
+                    for (size_t i = i_b; i < i_e; ++i) {
+                        for (size_t k = k_b; k < k_e; ++k) {
+                            __m256 v_A = _mm256_set1_ps(A[i * stride_A_M + k]);
+                            size_t j = j_b;
+                            for (; j + 8 <= j_e; j += 8) {
+                                __m256 v_B = _mm256_loadu_ps(&B[k * stride_B_K + j]);
+                                __m256 v_C = _mm256_loadu_ps(&C[i * stride_C_M + j]);
+                                v_C = _mm256_fmadd_ps(v_A, v_B, v_C);
+                                _mm256_storeu_ps(&C[i * stride_C_M + j], v_C);
+                            }
+                            for (; j < j_e; ++j) {
+                                C[i * stride_C_M + j] += A[i * stride_A_M + k] * B[k * stride_B_K + j];
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
 public:
@@ -413,7 +447,7 @@ public:
         return result;
     }
 
-    // Tensor Contraction: 支援Broadcasting的N維矩陣乘法
+    // Tensor Contraction: 結合了N維Broadcasting與內層AVX2+Tiling優化的N維矩陣乘法
     // 矩陣形狀的最後兩位才是真正要做矩陣乘法的形狀 前面的都是Batch
     // 最後兩位不可以不滿足矩陣乘法的限制：a*b和c*d的矩陣要做乘法的話 b與c必須相同
     // 除最後兩位外的形狀只要能滿足broadcasting的話 就可以相同
@@ -422,13 +456,13 @@ public:
         int ndim_A = shape_.size();
         int ndim_B = other.shape_.size();
 
-        // 檢查矩陣的維度至少是2
+        // 維度小於2的矩陣不能進行矩陣乘法
         if (ndim_A < 2 || ndim_B < 2)
         {
-            throw std::invalid_argument("matmul requires arrays to be at least 2D.");
+            throw std::invalid_argument("Requires at least 2D arrays.");
         }
 
-        // 檢查形狀的最後兩位是否符合矩陣乘法的規則
+        // 檢查最後兩個維度是否分別是M*K和K*N
         size_t M = shape_[ndim_A - 2];
         size_t K = shape_[ndim_A - 1];
         size_t other_K = other.shape_[ndim_B - 2];
@@ -436,10 +470,10 @@ public:
 
         if (K != other_K)
         {
-            throw std::invalid_argument("Matrix inner dimensions do not align for multiplication.");
+            throw std::invalid_argument("Matrix inner dimensions do not align.");
         }
 
-        // 處理Batch的Broadcasting
+        // 對Batch區進行broadcasting
         int batch_ndim_A = ndim_A - 2;
         int batch_ndim_B = ndim_B - 2;
         int max_batch_ndim = std::max(batch_ndim_A, batch_ndim_B);
@@ -457,74 +491,94 @@ public:
             size_t dim_A = (idx_A >= 0) ? shape_[idx_A] : 1;
             size_t dim_B = (idx_B >= 0) ? other.shape_[idx_B] : 1;
 
+            //若Batch區的維度無法broadcasting 無法進行矩陣乘法 報錯
             if (dim_A != dim_B && dim_A != 1 && dim_B != 1)
             {
-                throw std::invalid_argument("Batch shapes cannot be broadcasted together.");
+                throw std::invalid_argument("Batch shapes cannot be broadcasted.");
             }
 
             result_batch_shape[result_idx] = std::max(dim_A, dim_B);
-
             batch_strides_A[result_idx] = (dim_A == 1) ? 0 : strides_[idx_A];
             batch_strides_B[result_idx] = (dim_B == 1) ? 0 : other.strides_[idx_B];
         }
 
+        // 建立結果陣列
         std::vector<size_t> result_shape = result_batch_shape;
         result_shape.push_back(M);
         result_shape.push_back(N);
-
         NDarray<T> result(result_shape);
 
-        // 預先提取Matrix的strides 提升迴圈效能
-        size_t stride_A_M = strides_[ndim_A - 2];
-        size_t stride_A_K = strides_[ndim_A - 1];
-        size_t stride_B_K = other.strides_[ndim_B - 2];
-        size_t stride_B_N = other.strides_[ndim_B - 1];
-        
-        int result_ndim = result.shape_.size();
-        size_t stride_C_M = result.strides_[result_ndim - 2];
-        size_t stride_C_N = result.strides_[result_ndim - 1];
+        // 如果最後一個維度不是連續記憶體(即stride為1) 則無法用AVX加速 只能用原本的矩陣乘法
+        bool use_avx = (strides_[ndim_A-1] == 1 && other.strides_[ndim_B-1] == 1);
 
         size_t num_batches = 1;
-        for (size_t dim : result_batch_shape)
-        {
-            num_batches *= dim;
-        }
+        for (size_t dim : result_batch_shape) num_batches *= dim;
 
-        // 走訪所有廣播後的Batch並相乘
+        // 遍歷所有broadcasting後的Batch
         for (size_t b = 0; b < num_batches; ++b)
         {
             size_t temp_b = b;
-            size_t batch_offset_A = 0;
-            size_t batch_offset_B = 0;
-            size_t batch_offset_C = 0;
+            size_t offset_A = 0, offset_B = 0, offset_C = 0;
 
             for (int d = max_batch_ndim - 1; d >= 0; --d)
             {
                 size_t coord = temp_b % result_batch_shape[d];
                 temp_b /= result_batch_shape[d];
-
-                batch_offset_A += coord * batch_strides_A[d];
-                batch_offset_B += coord * batch_strides_B[d];
-                batch_offset_C += coord * result.strides_[d];
+                offset_A += coord * batch_strides_A[d];
+                offset_B += coord * batch_strides_B[d];
+                offset_C += coord * result.strides_[d];
             }
 
-            for (size_t i = 0; i < M; ++i)
+            // 取得當前Batch的記憶體起點
+            const T* cur_A = this->data() + offset_A;
+            const T* cur_B = other.data() + offset_B;
+            T* cur_C = result.data() + offset_C;
+
+            if (use_avx)
             {
-                for (size_t k = 0; k < K; ++k)
+                // AVX加速的矩陣乘法
+                this->compute_2d_matmul_avx(cur_A, cur_B, cur_C, M, K, N, 
+                                            strides_[ndim_A-2], other.strides_[ndim_B-2], result.strides_[result_shape.size()-2]);
+            }
+            else
+            {
+                // 原本的矩陣乘法
+                size_t stride_A_M = strides_[ndim_A - 2];
+                size_t stride_A_K = strides_[ndim_A - 1];
+                size_t stride_B_K = other.strides_[ndim_B - 2];
+                size_t stride_B_N = other.strides_[ndim_B - 1];
+                size_t stride_C_M = result.strides_[result_shape.size() - 2];
+                size_t stride_C_N = result.strides_[result_shape.size() - 1];
+
+                for (size_t i = 0; i < M; ++i)
                 {
-                    size_t idx_A = batch_offset_A + i * stride_A_M + k * stride_A_K;
-                    T a_val = data_[idx_A];
-
-                    for (size_t j = 0; j < N; ++j)
+                    for (size_t k = 0; k < K; ++k)
                     {
-                        size_t idx_B = batch_offset_B + k * stride_B_K + j * stride_B_N;
-                        size_t idx_C = batch_offset_C + i * stride_C_M + j * stride_C_N;
-
-                        result.data_[idx_C] += a_val * other.data_[idx_B];
+                        T a_val = cur_A[i * stride_A_M + k * stride_A_K];
+                        for (size_t j = 0; j < N; ++j)
+                        {
+                            cur_C[i * stride_C_M + j * stride_C_N] += a_val * cur_B[k * stride_B_K + j * stride_B_N];
+                        }
                     }
                 }
             }
         }
+        return result;
+    }
+
+    // 矩陣轉置
+    NDarray<T> transpose() const
+    {
+        // 複製原本的資料陣列
+        NDarray<T> result(*this);
+        
+        // 將形狀反轉
+        result.shape_ = this->shape_;
+        std::reverse(result.shape_.begin(), result.shape_.end());
+        
+        // 將strides反轉
+        result.strides_ = this->strides_;
+        std::reverse(result.strides_.begin(), result.strides_.end());
 
         return result;
     }

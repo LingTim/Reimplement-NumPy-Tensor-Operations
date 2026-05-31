@@ -148,3 +148,15 @@ def test_different_shape_batch_ND_Tensor_Contraction():
     assert c[[9, 4, 1, 3]] == 6.0
     assert c[[5, 2, 0, 2]] == 6.0
     assert c[[1, 0, 1, 0]] == 6.0
+
+def test_transpose():
+    a = my_NDarray_module.Tensor([2, 3], [1, 2, 3, 4, 5, 6])
+    b = a.T
+    c = a @ b
+
+    assert c.shape == [2, 2]
+
+    assert c[[0, 0]] == 14.0
+    assert c[[0, 1]] == 32.0
+    assert c[[1, 0]] == 32.0
+    assert c[[1, 1]] == 77.0
